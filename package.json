@@ -1,0 +1,48 @@
+{
+  "name": "fishing-reservation",
+  "version": "1.0.0",
+  "description": "垂钓园钓位预订桌面客户端",
+  "main": "dist-electron/main.js",
+  "author": "Fishing Park",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build && electron-builder",
+    "preview": "vite preview",
+    "electron:dev": "vite",
+    "electron:build": "vue-tsc --noEmit && vite build && electron-builder"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.2.5",
+    "pinia": "^2.1.7",
+    "dayjs": "^1.11.10",
+    "element-plus": "^2.5.0",
+    "@element-plus/icons-vue": "^2.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10",
+    "vite-plugin-electron": "^0.28.0",
+    "vite-plugin-electron-renderer": "^0.14.5",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1",
+    "vue-tsc": "^1.8.27",
+    "@types/node": "^20.10.6"
+  },
+  "build": {
+    "appId": "com.fishing.reservation",
+    "productName": "垂钓园钓位预订系统",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist",
+      "dist-electron"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    }
+  }
+}
