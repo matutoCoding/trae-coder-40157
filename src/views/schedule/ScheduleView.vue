@@ -35,6 +35,19 @@
           <el-radio-button label="afternoon">下午 12:00-18:00</el-radio-button>
           <el-radio-button label="evening">夜钓 18:00-24:00</el-radio-button>
         </el-radio-group>
+        <el-input
+          v-model="searchKeyword"
+          placeholder="快速查预约：输入姓名或手机号"
+          clearable
+          style="width: 260px; margin-left: 16px;"
+          size="default"
+          :prefix-icon="Search"
+          @keyup.enter="handleSearch"
+        >
+          <template #append>
+            <el-button @click="handleSearch">查找</el-button>
+          </template>
+        </el-input>
       </div>
 
       <div v-for="(spots, area) in spotStore.groupedByArea" :key="area" class="area-section">
@@ -68,17 +81,23 @@
             <div v-else class="spot-price">
               ¥{{ spot.basePrice }}/时起
             </div>
-            <div v-if="getSpotOccupations(spot.id).length > 0" class="spot-timeline">
+            <div v-if="getSpotUpcomingOccs(spot.id).length > 0" class="spot-timeline">
+              <div class="timeline-title">
+                <el-icon><Clock /></el-icon>
+                当日排期
+              </div>
               <div
-                v-for="occ in getSpotOccupations(spot.id)"
+                v-for="occ in getSpotUpcomingOccs(spot.id)"
                 :key="occ.id"
                 class="timeline-item"
                 :class="'tl-' + occ.status"
                 :title="`${occ.anglerName} ${formatShortTime(occ.expectedStartTime || occ.startTime)} ~ ${formatShortTime(occ.expectedEndTime || '正在垂钓')}`"
               >
-                <span v-if="occ.status === 'reserved'">[预]</span>
-                <span v-else-if="occ.status === 'active'">[钓]</span>
-                {{ occ.anglerName }}
+                <span class="tl-time">{{ formatShortTime(occ.expectedStartTime || occ.startTime) }}</span>
+                <span v-if="occ.status === 'reserved'" class="tl-tag tl-tag-warn">预</span>
+                <span v-else-if="occ.status === 'active'" class="tl-tag tl-tag-active">钓</span>
+                <span class="tl-name">{{ occ.anglerName }}</span>
+                <span v-if="occ.deposit && occ.deposit > 0" class="tl-deposit">订¥{{ occ.deposit }}</span>
               </div>
             </div>
           </div>
@@ -91,7 +110,8 @@
         <el-icon><List /></el-icon>
         {{ viewDateLabel }}的排期记录
       </div>
-      <el-table :data="scheduledOccs" stripe style="width: 100%" :row-key="row => row.id">
+      <el-table :data="scheduledOccs" stripe style="width: 100%" :row-key="row => row.id"
+        :row-class-name="getOccRowClassName" ref="occTableRef">
         <el-table-column prop="anglerName" label="钓友" width="120" />
         <el-table-column label="钓位" min-width="180">
           <template #default="{ row }">
@@ -156,6 +176,14 @@
               </div>
             </div>
             <span v-else class="text-muted">已结束</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="订金" width="100">
+          <template #default="{ row }">
+            <span v-if="row.deposit && row.deposit > 0" style="color: #e6a23c; font-weight: 600;">
+              ¥{{ row.deposit.toFixed(2) }}
+            </span>
+            <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column label="临界提示" width="200">
@@ -287,6 +315,17 @@
         <el-form-item label="联系电话">
           <el-input v-model="reserveForm.phone" placeholder="请输入手机号" />
         </el-form-item>
+        <el-form-item label="已收订金">
+          <el-input-number
+            v-model="reserveForm.deposit"
+            :min="0"
+            :precision="2"
+            :step="10"
+            placeholder="可选，结算时自动抵扣"
+            style="width: 240px;"
+          />
+          <span class="text-muted ml-8" style="font-size: 12px;">元</span>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="reserveDialogVisible = false">取消</el-button>
@@ -353,8 +392,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { useSpotStore } from '@/stores/spot'
 import { useOccupationStore, useAnglerStore, getEffectiveStartTime } from '@/stores/occupation'
@@ -371,6 +411,8 @@ const pricingStore = usePricingStore()
 const datePreset = ref<'today' | 'tomorrow' | 'custom'>('today')
 const viewDate = ref(formatDate(new Date()))
 const timeRange = ref<'all' | 'morning' | 'afternoon' | 'evening'>('all')
+const searchKeyword = ref('')
+const highlightOccId = ref('')
 
 function onPresetChange(v: string) {
   if (v === 'today') viewDate.value = formatDate(new Date())
@@ -406,9 +448,16 @@ const scheduledOccs = computed(() => {
   if (!start && !end) return allOccsForDate.value
   return allOccsForDate.value.filter(o => {
     const os = new Date(getEffectiveStartTime(o)).getTime()
-    const oe = o.expectedEndTime ? new Date(o.expectedEndTime).getTime()
-      : o.endTime ? new Date(o.endTime).getTime()
-      : Date.now()
+    let oe: number
+    if (o.expectedEndTime) {
+      oe = new Date(o.expectedEndTime).getTime()
+    } else if (o.endTime) {
+      oe = new Date(o.endTime).getTime()
+    } else if (o.status === 'reserved' || o.status === 'active') {
+      oe = Infinity
+    } else {
+      oe = Date.now()
+    }
     const cs = start ? new Date(start).getTime() : 0
     const ce = end ? new Date(end).getTime() : Infinity
     return os < ce && oe > cs
@@ -430,7 +479,8 @@ const reserveForm = reactive({
   date: viewDate.value,
   startTime: '08:00',
   endTime: '',
-  checkInNow: false
+  checkInNow: false,
+  deposit: 0
 })
 
 const rescheduleDialogVisible = ref(false)
@@ -471,6 +521,18 @@ function getTypeLabel(type: FishingSpot['type']) {
 
 function getSpotOccupations(spotId: string): Occupation[] {
   return scheduledOccs.value.filter(o => o.spotIds.includes(spotId))
+}
+
+function getSpotUpcomingOccs(spotId: string): Occupation[] {
+  const now = Date.now()
+  const endOfDay = new Date(viewDate.value + ' 23:59:59').getTime()
+  return getSpotOccupations(spotId)
+    .filter(o => {
+      const s = new Date(getEffectiveStartTime(o)).getTime()
+      return s <= endOfDay
+    })
+    .sort((a, b) => new Date(getEffectiveStartTime(a)).getTime() - new Date(getEffectiveStartTime(b)).getTime())
+    .slice(0, 3)
 }
 
 function getSpotStatus(spotId: string): 'available' | 'active' | 'reserved' | 'maintenance' {
@@ -662,13 +724,15 @@ function confirmReserve() {
       occStore.createOccupation(seg, angler.id, angler.name, {
         expectedStartTime: expectedStart,
         expectedEndTime: expectedEnd,
-        checkInImmediately: reserveForm.checkInNow
+        checkInImmediately: reserveForm.checkInNow,
+        deposit: reserveForm.deposit || 0
       })
       created++
     }
-    ElMessage.success(`预订成功！共 ${created} 段${reserveForm.checkInNow ? '已开钓' : '预约'}，涉及 ${reserveForm.spotIds.length} 个钓位`)
+    ElMessage.success(`预订成功！共 ${created} 段${reserveForm.checkInNow ? '已开钓' : '预约'}，涉及 ${reserveForm.spotIds.length} 个钓位${reserveForm.deposit ? `，已收订金 ¥${reserveForm.deposit.toFixed(2)}` : ''}`)
     reserveDialogVisible.value = false
     reserveForm.spotIds = []
+    reserveForm.deposit = 0
   } catch (e: any) {
     ElMessage.error(e.message || '预订失败')
   }
@@ -743,6 +807,93 @@ function goToBilling(row: Occupation, tab: string = 'active') {
 
 function goToMerge(row: Occupation) {
   router.push({ path: '/merge', query: { occId: row.id } })
+}
+
+const occTableRef = ref<any>(null)
+
+function getOccRowClassName({ row }: { row: Occupation }) {
+  if (row.id === highlightOccId.value) return 'occ-highlight-row'
+  return ''
+}
+
+function handleSearch() {
+  const kw = searchKeyword.value.trim().toLowerCase()
+  if (!kw) {
+    ElMessage.warning('请输入姓名或手机号')
+    return
+  }
+
+  const matched = occStore.occupations.filter(o => {
+    if (o.status === 'cancelled' || o.status === 'split') return false
+    return o.anglerName.toLowerCase().includes(kw) || o.anglerId.includes(kw)
+  })
+
+  const anglerMatched = anglerStore.anglers.filter(a =>
+    a.name.toLowerCase().includes(kw) || a.phone.includes(kw)
+  )
+  const anglerIds = new Set(anglerMatched.map(a => a.id))
+  const byAngler = occStore.occupations.filter(o => {
+    if (o.status === 'cancelled' || o.status === 'split') return false
+    return anglerIds.has(o.anglerId)
+  })
+
+  const all = [...new Map([...matched, ...byAngler].map(o => [o.id, o])).values()]
+    .sort((a, b) => new Date(getEffectiveStartTime(b)).getTime() - new Date(getEffectiveStartTime(a)).getTime())
+
+  if (all.length === 0) {
+    ElMessage.warning(`没有找到 "${kw}" 的预约记录`)
+    return
+  }
+
+  if (all.length === 1) {
+    jumpToOcc(all[0])
+    return
+  }
+
+  const options = all.map((o, i) => {
+    const date = getEffectiveStartTime(o).substring(0, 10)
+    const codes = o.spotIds.map(sid => spotStore.getSpotById(sid)?.code || '?').join(',')
+    return `[${i + 1}] ${o.anglerName} · ${date} · ${codes} · ${getOccStatusLabel(o)}`
+  })
+
+  ElMessageBox.prompt(
+    `找到 ${all.length} 条相关预约：\n\n${options.join('\n')}\n\n请输入序号跳转（1-${all.length}）`,
+    `搜索结果：${kw}`,
+    {
+      confirmButtonText: '跳转',
+      cancelButtonText: '取消',
+      inputValue: '1',
+      inputValidator: (v: string) => {
+        const n = parseInt(v)
+        if (!isNaN(n) && n >= 1 && n <= all.length) return true
+        return `请输入 1 到 ${all.length} 之间的数字`
+      }
+    }
+  ).then(({ value }) => {
+    const n = parseInt(value)
+    jumpToOcc(all[n - 1])
+  }).catch(() => {})
+}
+
+function jumpToOcc(occ: Occupation) {
+  const dateStr = getEffectiveStartTime(occ).substring(0, 10)
+  datePreset.value = 'custom'
+  viewDate.value = dateStr
+  timeRange.value = 'all'
+
+  nextTick(() => {
+    highlightOccId.value = occ.id
+    setTimeout(() => {
+      highlightOccId.value = ''
+    }, 5000)
+    if (occTableRef.value) {
+      const idx = scheduledOccs.value.findIndex(o => o.id === occ.id)
+      if (idx >= 0 && occTableRef.value.scrollTo) {
+        occTableRef.value.scrollTo({ top: idx * 50 })
+      }
+    }
+    ElMessage.success(`已跳转到 ${dateStr}，定位 ${occ.anglerName} 的记录`)
+  })
 }
 </script>
 
@@ -870,21 +1021,77 @@ function goToMerge(row: Occupation) {
 }
 
 .spot-timeline {
-  margin-top: 6px;
-  max-height: 40px;
-  overflow: hidden;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed #e4e7ed;
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.timeline-title {
+  font-size: 11px;
+  color: #909399;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 500;
 }
 
 .timeline-item {
-  font-size: 10px;
-  color: #909399;
-  padding: 1px 4px;
+  font-size: 11px;
+  color: #606266;
+  padding: 3px 6px;
   background: #f5f7fa;
+  border-radius: 4px;
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.tl-time {
+  font-family: 'Courier New', monospace;
+  color: #409eff;
+  font-weight: 600;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.tl-tag {
+  font-size: 9px;
+  padding: 1px 4px;
   border-radius: 3px;
-  margin-top: 2px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.tl-tag-warn {
+  background: #fdf6ec;
+  color: #e6a23c;
+  border: 1px solid #faecd8;
+}
+
+.tl-tag-active {
+  background: #fef0f0;
+  color: #f56c6c;
+  border: 1px solid #fde2e2;
+}
+
+.tl-name {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 80px;
+}
+
+.tl-deposit {
+  font-size: 10px;
+  color: #e6a23c;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 .tl-reserved {
@@ -945,5 +1152,19 @@ function goToMerge(row: Occupation) {
 
 .ml-8 {
   margin-left: 8px;
+}
+
+:deep(.occ-highlight-row) {
+  background-color: #fdf6ec !important;
+}
+
+:deep(.occ-highlight-row td) {
+  background-color: #fdf6ec !important;
+  animation: occHighlightPulse 2s ease-in-out infinite;
+}
+
+@keyframes occHighlightPulse {
+  0%, 100% { background-color: #fdf6ec; }
+  50% { background-color: #faecd8; }
 }
 </style>

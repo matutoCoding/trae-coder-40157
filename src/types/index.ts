@@ -36,6 +36,7 @@ export interface Occupation {
   status: OccupationStatus
   splitFromId?: string
   billingStatus: 'unbilled' | 'billed' | 'paid'
+  deposit?: number
   createTime: string
 }
 
@@ -66,6 +67,8 @@ export interface BillingDetail {
   subtotal: number
 }
 
+export type BillStatus = 'active' | 'voided'
+
 export interface Bill {
   id: string
   occupationId: string
@@ -83,8 +86,15 @@ export interface Bill {
   catches: CatchRecord[]
   catchTotal: number
   discount: number
+  deposit: number
   totalAmount: number
+  amountDue: number
   paid: boolean
+  paidAmount: number
+  paymentStatus: 'unpaid' | 'partial' | 'paid'
+  billStatus: BillStatus
+  voidReason?: string
+  voidTime?: string
   payTime?: string
   createTime: string
 }

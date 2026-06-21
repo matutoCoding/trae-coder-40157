@@ -11,8 +11,14 @@
             <el-icon><Promotion /></el-icon>
             拆分待结算 {{ occStore.pendingBillOccupations.length }}
           </el-tag>
-          <el-tag type="danger" effect="light">待支付 {{ billStore.unpaidBills.length }}</el-tag>
+          <el-tag type="danger" effect="light">
+            待支付 {{ billStore.unpaidBills.length }}
+            <span v-if="billStore.partialBills.length > 0">
+              （部分{{ billStore.partialBills.length }}）
+            </span>
+          </el-tag>
           <el-tag type="success" effect="light">已结算 {{ billStore.paidBills.length }}</el-tag>
+          <el-tag v-if="billStore.voidedBills.length > 0" type="info" effect="light">已作废 {{ billStore.voidedBills.length }}</el-tag>
         </div>
       </div>
 
@@ -53,6 +59,14 @@
             </el-table-column>
             <el-table-column label="垂钓时长" width="110">
               <template #default="{ row }">{{ getDuration(row) }}</template>
+            </el-table-column>
+            <el-table-column label="订金" width="100">
+              <template #default="{ row }">
+                <span v-if="row.deposit && row.deposit > 0" style="color: #e6a23c; font-weight: 600;">
+                  ¥{{ row.deposit.toFixed(2) }}
+                </span>
+                <span v-else class="text-muted">-</span>
+              </template>
             </el-table-column>
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
@@ -154,13 +168,6 @@
           <el-table :data="billStore.unpaidBills" stripe style="width: 100%">
             <el-table-column prop="anglerName" label="钓友" width="120" />
             <el-table-column prop="spotNames" label="钓位" min-width="180" show-overflow-tooltip />
-            <el-table-column label="时间" width="340">
-              <template #default="{ row }">
-                <div>{{ row.startTime }}</div>
-                <div class="text-muted">至 {{ row.endTime }}</div>
-                <div class="text-muted">共 {{ row.totalHours }} 小时</div>
-              </template>
-            </el-table-column>
             <el-table-column label="垂钓费" width="100">
               <template #default="{ row }">¥{{ row.fishingFee.toFixed(2) }}</template>
             </el-table-column>
@@ -170,19 +177,48 @@
             <el-table-column label="优惠" width="90">
               <template #default="{ row }">-¥{{ row.discount.toFixed(2) }}</template>
             </el-table-column>
-            <el-table-column label="应收金额" width="130">
+            <el-table-column label="订金抵扣" width="100">
               <template #default="{ row }">
-                <span class="text-danger" style="font-weight: 700; font-size: 16px;">
+                <span v-if="row.deposit > 0" style="color: #e6a23c;">-¥{{ row.deposit.toFixed(2) }}</span>
+                <span v-else class="text-muted">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="原价合计" width="110">
+              <template #default="{ row }">¥{{ (row.fishingFee + row.catchTotal).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="应付账单" width="130">
+              <template #default="{ row }">
+                <span class="text-danger" style="font-weight: 700;">
                   ¥{{ row.totalAmount.toFixed(2) }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="220" fixed="right">
+            <el-table-column label="已收款" width="100">
               <template #default="{ row }">
-                <el-button size="small" @click="viewBill(row)">查看明细</el-button>
+                <span v-if="row.paidAmount > 0" style="color: #67c23a;">
+                  ¥{{ row.paidAmount.toFixed(2) }}
+                </span>
+                <span v-else class="text-muted">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="还需收" width="120">
+              <template #default="{ row }">
+                <span class="text-danger" style="font-weight: 700; font-size: 16px;">
+                  ¥{{ row.amountDue.toFixed(2) }}
+                </span>
+                <el-tag v-if="row.paymentStatus === 'partial'" size="small" type="warning" style="margin-left: 4px;">部分</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="260" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" @click="viewBill(row)">查看</el-button>
+                <el-button size="small" type="warning" @click="handleVoidBill(row)">
+                  <el-icon><Close /></el-icon>
+                  作废
+                </el-button>
                 <el-button size="small" type="success" @click="handlePay(row)">
                   <el-icon><Wallet /></el-icon>
-                  确认收款
+                  收款
                 </el-button>
               </template>
             </el-table-column>
@@ -198,6 +234,21 @@
             <el-table-column prop="spotNames" label="钓位" min-width="180" show-overflow-tooltip />
             <el-table-column label="时长" width="100">
               <template #default="{ row }">{{ row.totalHours }}h</template>
+            </el-table-column>
+            <el-table-column label="垂钓费" width="100">
+              <template #default="{ row }">¥{{ row.fishingFee.toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="渔获费" width="100">
+              <template #default="{ row }">¥{{ row.catchTotal.toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="优惠" width="90">
+              <template #default="{ row }">-¥{{ row.discount.toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="订金抵扣" width="100">
+              <template #default="{ row }">
+                <span v-if="row.deposit > 0" style="color: #e6a23c;">-¥{{ row.deposit.toFixed(2) }}</span>
+                <span v-else class="text-muted">-</span>
+              </template>
             </el-table-column>
             <el-table-column label="实收金额" width="130">
               <template #default="{ row }">
@@ -216,6 +267,31 @@
           <div v-if="billStore.paidBills.length === 0" class="empty-tip">
             <el-empty description="暂无已结算账单" />
           </div>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="billStore.voidedBills.length > 0" label="已作废账单" name="voided">
+          <el-table :data="billStore.voidedBills" stripe style="width: 100%">
+            <el-table-column prop="anglerName" label="钓友" width="120" />
+            <el-table-column prop="spotNames" label="钓位" min-width="180" show-overflow-tooltip />
+            <el-table-column label="应付金额" width="130">
+              <template #default="{ row }">
+                <span style="text-decoration: line-through; color: #909399;">
+                  ¥{{ row.totalAmount.toFixed(2) }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="作废原因" min-width="200">
+              <template #default="{ row }">{{ row.voidReason || '未填写' }}</template>
+            </el-table-column>
+            <el-table-column label="作废时间" width="170">
+              <template #default="{ row }">{{ row.voidTime }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" @click="viewBill(row)">查看</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -428,26 +504,57 @@
             <span>¥{{ currentBill.catchTotal.toFixed(2) }}</span>
           </div>
           <div class="bill-line">
+            <span class="text-muted">原价合计：</span>
+            <span style="font-weight: 600;">¥{{ (currentBill.fishingFee + currentBill.catchTotal).toFixed(2) }}</span>
+          </div>
+          <div class="bill-line" style="border-top: 1px dashed #e4e7ed; padding-top: 8px;">
             <span class="text-muted">优惠减免：</span>
             <span class="text-success">-¥{{ currentBill.discount.toFixed(2) }}</span>
           </div>
-          <div class="bill-line bill-total-line">
-            <span>应收金额：</span>
-            <span class="text-danger" style="font-size: 22px; font-weight: 700;">
-              ¥{{ currentBill.totalAmount.toFixed(2) }}
+          <div class="bill-line">
+            <span class="text-muted">应付金额（优惠后）：</span>
+            <span style="font-weight: 600; color: #409eff;">¥{{ currentBill.totalAmount.toFixed(2) }}</span>
+          </div>
+          <div class="bill-line" v-if="currentBill.deposit > 0">
+            <span class="text-muted">
+              <el-tag size="small" type="warning" style="margin-right: 6px;">订金</el-tag>
+              订金抵扣：
             </span>
+            <span class="text-success">-¥{{ currentBill.deposit.toFixed(2) }}</span>
+          </div>
+          <div class="bill-line bill-total-line" v-if="currentBill.billStatus === 'active'">
+            <span>{{ currentBill.paymentStatus === 'paid' ? '已收金额' : '还需收款' }}：</span>
+            <span :class="currentBill.paymentStatus === 'paid' ? 'text-success' : 'text-danger'" style="font-size: 22px; font-weight: 700;">
+              ¥{{ currentBill.paymentStatus === 'paid' ? currentBill.totalAmount.toFixed(2) : currentBill.amountDue.toFixed(2) }}
+            </span>
+          </div>
+          <div class="bill-line bill-total-line" v-else>
+            <span>账单状态：</span>
+            <el-tag type="info" size="large">已作废</el-tag>
+          </div>
+          <div class="bill-line" v-if="currentBill.paidAmount > 0 && !currentBill.paid">
+            <span class="text-success">已累计收款：¥{{ currentBill.paidAmount.toFixed(2) }}</span>
           </div>
           <div class="bill-line" v-if="currentBill.paid">
             <span class="text-success">
               <el-icon><CircleCheck /></el-icon>
-              已收款 · {{ currentBill.payTime }}
+              已全部付清 · {{ currentBill.payTime }}
+            </span>
+          </div>
+          <div class="bill-line" v-if="currentBill.billStatus === 'voided'">
+            <span class="text-muted">
+              <el-icon><Warning /></el-icon>
+              作废原因：{{ currentBill.voidReason || '未填写' }} · {{ currentBill.voidTime }}
             </span>
           </div>
         </div>
       </div>
       <template #footer>
         <el-button @click="billDetailVisible = false">关闭</el-button>
-        <el-button v-if="currentBill && !currentBill.paid" type="success" @click="handlePay(currentBill)">
+        <el-button v-if="currentBill && currentBill.billStatus === 'active' && !currentBill.paid" type="warning" @click="handleVoidBill(currentBill)">
+          作废账单
+        </el-button>
+        <el-button v-if="currentBill && currentBill.billStatus === 'active' && !currentBill.paid" type="success" @click="handlePay(currentBill)">
           确认收款
         </el-button>
       </template>
@@ -615,14 +722,75 @@ function viewBill(bill: Bill) {
 }
 
 function handlePay(bill: Bill) {
-  ElMessageBox.confirm(
-    `确认收到钓友 ${bill.anglerName} 的款项 ¥${bill.totalAmount.toFixed(2)} 吗？收款后本条记录将归档到已结算列表。`,
-    '收款确认',
-    { confirmButtonText: '确认收款', cancelButtonText: '取消', type: 'success' }
-  ).then(() => {
-    billStore.markPaid(bill.id)
-    currentBill.value = billStore.getBillById(bill.id) || null
-    ElMessage.success('收款成功，已归档')
+  if (bill.billStatus !== 'active') {
+    ElMessage.warning('账单已作废，无法收款')
+    return
+  }
+  if (bill.amountDue <= 0.001) {
+    ElMessage.warning('该账单已全部付清')
+    return
+  }
+  ElMessageBox.prompt(
+    `待收金额：¥${bill.amountDue.toFixed(2)}` + (bill.paidAmount > 0 ? `（已累计收 ¥${bill.paidAmount.toFixed(2)}）` : ''),
+    `收款 · ${bill.anglerName}`,
+    {
+      confirmButtonText: '确认收款',
+      cancelButtonText: '取消',
+      inputValue: bill.amountDue.toFixed(2),
+      inputPlaceholder: '请输入收款金额，全额收款可直接确认',
+      inputValidator: (value: string) => {
+        const num = parseFloat(value)
+        if (isNaN(num) || num <= 0) return '请输入有效金额'
+        if (num > bill.amountDue + 0.001) return `收款金额不能超过待收 ¥${bill.amountDue.toFixed(2)}`
+        return true
+      }
+    }
+  ).then(({ value }) => {
+    try {
+      const amount = parseFloat(value)
+      billStore.markPaid(bill.id, amount)
+      const updated = billStore.getBillById(bill.id)
+      currentBill.value = updated || null
+      if (updated?.paid) {
+        ElMessage.success(`已收款 ¥${amount.toFixed(2)}，账单已全部结清`)
+      } else {
+        ElMessage.success(`已收款 ¥${amount.toFixed(2)}，仍需收 ¥${(updated?.amountDue || 0).toFixed(2)}`)
+      }
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
+  }).catch(() => {})
+}
+
+function handleVoidBill(bill: Bill) {
+  if (bill.billStatus !== 'active') {
+    ElMessage.warning('账单已作废')
+    return
+  }
+  if (bill.paymentStatus === 'paid') {
+    ElMessage.error('已收款账单不能作废，若需调整请联系管理员')
+    return
+  }
+  ElMessageBox.prompt(
+    `将作废 ${bill.anglerName} 的账单 ¥${bill.totalAmount.toFixed(2)}，作废后回到待结算可重新调整。`,
+    '作废账单',
+    {
+      confirmButtonText: '确认作废',
+      cancelButtonText: '取消',
+      type: 'warning',
+      inputPlaceholder: '请输入作废原因（可选）'
+    }
+  ).then(({ value }) => {
+    try {
+      billStore.voidBill(bill.id, value || '')
+      if (currentBill.value?.id === bill.id) {
+        currentBill.value = billStore.getBillById(bill.id) || null
+      }
+      ElMessage.success('账单已作废，可在待结算中重新出账')
+      activeTab.value = 'pending'
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
   }).catch(() => {})
 }
 </script>

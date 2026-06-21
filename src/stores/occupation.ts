@@ -226,6 +226,7 @@ export const useOccupationStore = defineStore('occupation', () => {
       expectedStartTime?: string
       expectedEndTime?: string
       checkInImmediately?: boolean
+      deposit?: number
     }
   ): Occupation {
     const spotStore = useSpotStore()
@@ -275,6 +276,7 @@ export const useOccupationStore = defineStore('occupation', () => {
       parentId: null,
       status: checkInImmediately ? 'active' : 'reserved',
       billingStatus: 'unbilled',
+      deposit: options?.deposit || 0,
       createTime: now
     }
     occupations.value.push(occ)
@@ -480,6 +482,17 @@ export const useOccupationStore = defineStore('occupation', () => {
     }
   }
 
+  function resetToUnbilled(occupationId: string) {
+    const occ = getOccupationById(occupationId)
+    if (occ) {
+      occ.billingStatus = 'unbilled'
+      if (occ.status === 'completed') {
+        occ.status = 'pending_bill'
+      }
+      save()
+    }
+  }
+
   function getOccupationsForDate(dateStr: string): Occupation[] {
     const startOfDay = new Date(dateStr + ' 00:00:00').getTime()
     const endOfDay = new Date(dateStr + ' 23:59:59').getTime()
@@ -518,6 +531,7 @@ export const useOccupationStore = defineStore('occupation', () => {
     endOccupation,
     markBilled,
     markPaid,
+    resetToUnbilled,
     validateContinuousSegment,
     splitIntoContinuousSegments,
     checkTimeConflict,

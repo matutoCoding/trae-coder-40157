@@ -40,6 +40,17 @@
           <el-switch v-model="mergeForm.checkInNow" />
           <span class="text-muted ml-8" style="font-size: 12px;">勾选后直接开始计费</span>
         </el-form-item>
+        <el-form-item label="已收订金">
+          <el-input-number
+            v-model="mergeForm.deposit"
+            :min="0"
+            :precision="2"
+            :step="10"
+            placeholder="可选，结算时自动抵扣"
+            style="width: 220px;"
+          />
+          <span class="text-muted ml-8" style="font-size: 12px;">元</span>
+        </el-form-item>
       </el-form>
 
       <div class="merge-area">
@@ -323,7 +334,8 @@ const mergeForm = reactive({
   phone: '',
   startTime: now,
   endTime: '',
-  checkInNow: false
+  checkInNow: false,
+  deposit: 0
 })
 
 const selectedSplitRow = ref<Occupation | null>(null)
@@ -411,13 +423,15 @@ function confirmMergeCreate() {
       occStore.createOccupation(seg, angler.id, angler.name, {
         expectedStartTime: mergeForm.startTime,
         expectedEndTime: mergeForm.endTime || undefined,
-        checkInImmediately: mergeForm.checkInNow
+        checkInImmediately: mergeForm.checkInNow,
+        deposit: mergeForm.deposit || 0
       })
       created++
     }
-    ElMessage.success(`预订成功！共生成 ${created} 段${mergeForm.checkInNow ? '已开钓' : '预约'}，涉及 ${mergeForm.selectedIds.length} 个钓位`)
+    ElMessage.success(`预订成功！共生成 ${created} 段${mergeForm.checkInNow ? '已开钓' : '预约'}，涉及 ${mergeForm.selectedIds.length} 个钓位${mergeForm.deposit ? `，已收订金 ¥${mergeForm.deposit.toFixed(2)}` : ''}`)
     mergeForm.selectedIds = []
     mergeForm.checkInNow = false
+    mergeForm.deposit = 0
     selectedSplitRow.value = null
     selectedSplitSpot.value = ''
   } catch (e: any) {
