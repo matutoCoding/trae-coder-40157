@@ -91,8 +91,8 @@ export const useOccupationStore = defineStore('occupation', () => {
 
   const pendingBillOccupations = computed(() =>
     occupations.value.filter(o =>
-      (o.status === 'completed' || o.status === 'pending_bill') &&
-      o.billingStatus === 'unbilled'
+      ((o.status === 'completed' || o.status === 'pending_bill' || o.status === 'reserved') &&
+      o.billingStatus === 'unbilled')
     )
   )
 
@@ -451,6 +451,9 @@ export const useOccupationStore = defineStore('occupation', () => {
   function endOccupation(occupationId: string): Occupation {
     const occ = getOccupationById(occupationId)
     if (!occ) throw new Error('占用记录不存在')
+    if (occ.status !== 'active' && occ.status !== 'reserved') {
+      throw new Error('只有进行中或已预约的占用才能结束')
+    }
     occ.status = 'completed'
     occ.endTime = formatDateTime(new Date())
     if (occ.billingStatus !== 'billed' && occ.billingStatus !== 'paid') {
@@ -483,9 +486,16 @@ export const useOccupationStore = defineStore('occupation', () => {
     return occupations.value.filter(o => {
       if (o.status === 'split' || o.status === 'cancelled') return false
       const s = new Date(getEffectiveStartTime(o)).getTime()
-      const e = o.endTime ? new Date(o.endTime).getTime()
-        : o.expectedEndTime ? new Date(o.expectedEndTime).getTime()
-        : Date.now()
+      let e: number
+      if (o.endTime) {
+        e = new Date(o.endTime).getTime()
+      } else if (o.expectedEndTime) {
+        e = new Date(o.expectedEndTime).getTime()
+      } else if (o.status === 'reserved' || o.status === 'active') {
+        e = Infinity
+      } else {
+        e = Date.now()
+      }
       return s <= endOfDay && e >= startOfDay
     })
   }

@@ -178,6 +178,10 @@
                 <el-icon><Right /></el-icon>
                 到店开钓
               </el-button>
+              <el-button size="small" @click="goToBilling(row, 'pending')">
+                <el-icon><Tickets /></el-icon>
+                去结算
+              </el-button>
               <el-button size="small" @click="handleReschedule(row)">
                 <el-icon><Edit /></el-icon>
                 改期
@@ -473,21 +477,30 @@ function getSpotStatus(spotId: string): 'available' | 'active' | 'reserved' | 'm
   const spot = spotStore.getSpotById(spotId)
   if (spot?.status === 'maintenance' || spot?.status === 'closed') return 'maintenance'
 
-  const now = Date.now()
   const occs = getSpotOccupations(spotId)
   if (occs.length === 0) return 'available'
+
+  const viewDateStart = new Date(viewDate.value + ' 00:00:00').getTime()
+  const viewDateEnd = new Date(viewDate.value + ' 23:59:59').getTime()
 
   const active = occs.find(o => {
     if (o.status === 'active') {
       const s = new Date(getEffectiveStartTime(o)).getTime()
       const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
-      return now >= s && now < e
+      return s <= viewDateEnd && e >= viewDateStart
     }
     return false
   })
   if (active) return 'active'
 
-  const reserved = occs.find(o => o.status === 'reserved')
+  const reserved = occs.find(o => {
+    if (o.status === 'reserved') {
+      const s = new Date(getEffectiveStartTime(o)).getTime()
+      const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
+      return s <= viewDateEnd && e >= viewDateStart
+    }
+    return false
+  })
   if (reserved) return 'reserved'
 
   return 'available'
@@ -502,12 +515,13 @@ function getSpotClass(id: string) {
 }
 
 function getSpotAngler(id: string) {
-  const now = Date.now()
+  const viewDateStart = new Date(viewDate.value + ' 00:00:00').getTime()
+  const viewDateEnd = new Date(viewDate.value + ' 23:59:59').getTime()
   const occ = getSpotOccupations(id).find(o => {
-    if (o.status === 'active') {
+    if (o.status === 'active' || o.status === 'reserved') {
       const s = new Date(getEffectiveStartTime(o)).getTime()
       const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
-      return now >= s && now < e
+      return s <= viewDateEnd && e >= viewDateStart
     }
     return false
   })

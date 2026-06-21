@@ -337,21 +337,41 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="billDetailVisible" :title="`账单明细 · ${currentBill?.anglerName || ''}`" width="640px">
+    <el-dialog v-model="billDetailVisible" :title="`账单明细 · ${currentBill?.anglerName || ''}`" width="680px">
       <div v-if="currentBill">
         <el-descriptions :column="2" border size="default">
           <el-descriptions-item label="账单号" :span="2">{{ currentBill.id }}</el-descriptions-item>
           <el-descriptions-item label="钓友">{{ currentBill.anglerName }}</el-descriptions-item>
           <el-descriptions-item label="钓位">{{ currentBill.spotNames }}</el-descriptions-item>
-          <el-descriptions-item label="预约开钓">{{ currentBill.expectedStartTime }}</el-descriptions-item>
-          <el-descriptions-item label="实际开钓">
-            <span v-if="currentBill.actualStartTime && currentBill.actualStartTime !== currentBill.expectedStartTime" style="color: #67c23a;">
-              {{ currentBill.actualStartTime }}
-            </span>
-            <span v-else class="text-muted">按预约时间计费</span>
+          <el-descriptions-item label="预约开钓时间" :span="2">
+            <div class="time-row">
+              <el-tag size="small" type="info">预约</el-tag>
+              <span class="time-value">{{ currentBill.expectedStartTime }}</span>
+            </div>
           </el-descriptions-item>
-          <el-descriptions-item label="收竿结束" :span="2">{{ currentBill.endTime }}</el-descriptions-item>
-          <el-descriptions-item label="总时长" :span="2">{{ currentBill.totalHours }} 小时</el-descriptions-item>
+          <el-descriptions-item label="实际开钓时间" :span="2">
+            <div class="time-row">
+              <el-tag v-if="currentBill.actualStartTime && currentBill.actualStartTime !== currentBill.expectedStartTime" size="small" type="success">已开钓</el-tag>
+              <el-tag v-else size="small" type="warning">未开钓</el-tag>
+              <span v-if="currentBill.actualStartTime && currentBill.actualStartTime !== currentBill.expectedStartTime" class="time-value time-green">
+                {{ currentBill.actualStartTime }}
+              </span>
+              <span v-else class="time-value text-muted">
+                按预约时间计费（{{ currentBill.expectedStartTime }}）
+              </span>
+            </div>
+          </el-descriptions-item>
+          <el-descriptions-item label="收竿结束时间" :span="2">
+            <div class="time-row">
+              <el-tag size="small" type="danger">已结束</el-tag>
+              <span class="time-value">{{ currentBill.endTime }}</span>
+            </div>
+          </el-descriptions-item>
+          <el-descriptions-item label="计费说明" :span="2">
+            <span class="text-muted">
+              计费时长从 <b>{{ currentBill.actualStartTime && currentBill.actualStartTime !== currentBill.expectedStartTime ? '实际开钓' : '预约开钓' }}</b> 时间开始计算，共 {{ currentBill.totalHours }} 小时
+            </span>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div class="mt-16">
@@ -566,7 +586,7 @@ function doGenerateBill(occ: Occupation, useFixedEndTime: boolean = false) {
       const endTime = useFixedEndTime && occ.endTime
         ? occ.endTime
         : formatDateTime(new Date())
-      if (occ.status === 'active') {
+      if (occ.status === 'active' || occ.status === 'reserved') {
         occStore.endOccupation(occ.id)
       }
       const bill = billStore.generateBill(occ.id, endTime, discount)
@@ -668,5 +688,21 @@ function handlePay(bill: Bill) {
 @keyframes highlightPulse {
   0%, 100% { background-color: #fdf6ec; }
   50% { background-color: #faecd8; }
+}
+
+.time-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.time-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.time-green {
+  color: #67c23a !important;
 }
 </style>
