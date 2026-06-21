@@ -18,6 +18,8 @@ export interface FishingSpot {
   description?: string
 }
 
+export type OccupationStatus = 'active' | 'completed' | 'split' | 'pending_bill'
+
 export interface Occupation {
   id: string
   spotId: string
@@ -26,10 +28,13 @@ export interface Occupation {
   anglerName: string
   startTime: string
   endTime: string | null
+  expectedStartTime?: string
+  expectedEndTime?: string
   isMerged: boolean
   parentId: string | null
-  status: 'active' | 'completed' | 'split'
+  status: OccupationStatus
   splitFromId?: string
+  billingStatus: 'unbilled' | 'billed' | 'paid'
   createTime: string
 }
 

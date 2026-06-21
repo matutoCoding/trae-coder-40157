@@ -7,13 +7,17 @@
           账单生成 · 渔获过磅
         </div>
         <div class="flex-center" style="gap: 12px;">
-          <el-tag type="danger" effect="light">待结算 {{ billStore.unpaidBills.length }}</el-tag>
+          <el-tag type="warning" effect="light">
+            <el-icon><Promotion /></el-icon>
+            拆分待结算 {{ occStore.pendingBillOccupations.length }}
+          </el-tag>
+          <el-tag type="danger" effect="light">待支付 {{ billStore.unpaidBills.length }}</el-tag>
           <el-tag type="success" effect="light">已结算 {{ billStore.paidBills.length }}</el-tag>
         </div>
       </div>
 
       <el-tabs v-model="activeTab" type="border-card">
-        <el-tab-pane label="进行中的占用（收竿结算）" name="active">
+        <el-tab-pane label="进行中（收竿结算）" name="active">
           <el-table :data="occStore.activeOccupations" stripe style="width: 100%">
             <el-table-column prop="anglerName" label="钓友" width="120" />
             <el-table-column label="钓位" min-width="180">
@@ -28,6 +32,7 @@
                   {{ spotStore.getSpotById(sid)?.code }}
                 </el-tag>
                 <el-tag v-if="row.isMerged" type="warning" size="small">合并</el-tag>
+                <el-tag v-if="row.splitFromId" type="info" size="small">拆分后</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="开始时间" width="170">
@@ -36,7 +41,7 @@
             <el-table-column label="垂钓时长" width="110">
               <template #default="{ row }">{{ getDuration(row) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" @click="openWeighing(row)">
                   <el-icon><Scale /></el-icon>
@@ -51,6 +56,65 @@
           </el-table>
           <div v-if="occStore.activeOccupations.length === 0" class="empty-tip">
             <el-empty description="当前没有进行中的占用" />
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="拆分待结算" name="pending">
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            class="mb-12"
+            title="以下为中途拆分出的钓位占用，已结束垂钓等待结算。可补录渔获然后生成账单。"
+          />
+          <el-table :data="occStore.pendingBillOccupations" stripe style="width: 100%">
+            <el-table-column prop="anglerName" label="钓友" width="120" />
+            <el-table-column label="钓位" min-width="180">
+              <template #default="{ row }">
+                <el-tag
+                  v-for="sid in row.spotIds"
+                  :key="sid"
+                  type="warning"
+                  effect="light"
+                  style="margin-right: 4px;"
+                >
+                  {{ spotStore.getSpotById(sid)?.code }}
+                </el-tag>
+                <el-tag v-if="row.splitFromId" type="warning" size="small">中途拆分</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="垂钓时段" width="340">
+              <template #default="{ row }">
+                <div>{{ row.startTime }}</div>
+                <div class="text-muted">至 {{ row.endTime }}</div>
+                <div class="text-muted">共 {{ getFixedDuration(row) }} 小时</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="渔获" width="100">
+              <template #default="{ row }">
+                {{ getCatchCount(row.id) }} 条 / ¥{{ getCatchTotal(row.id).toFixed(2) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag type="warning" size="small">待结算</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" @click="openWeighing(row)">
+                  <el-icon><Scale /></el-icon>
+                  补录渔获
+                </el-button>
+                <el-button size="small" type="primary" @click="generatePendingBill(row)">
+                  <el-icon><Tickets /></el-icon>
+                  出账单
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-if="occStore.pendingBillOccupations.length === 0" class="empty-tip">
+            <el-empty description="暂无拆分待结算的钓位" />
           </div>
         </el-tab-pane>
 
@@ -74,7 +138,7 @@
             <el-table-column label="优惠" width="90">
               <template #default="{ row }">-¥{{ row.discount.toFixed(2) }}</template>
             </el-table-column>
-            <el-table-column label="应收金额" width="120">
+            <el-table-column label="应收金额" width="130">
               <template #default="{ row }">
                 <span class="text-danger" style="font-weight: 700; font-size: 16px;">
                   ¥{{ row.totalAmount.toFixed(2) }}
@@ -96,7 +160,7 @@
           </div>
         </el-tab-pane>
 
-        <el-tab-pane label="已结算账单" name="paid">
+        <el-tab-pane label="已结算（已归档）" name="paid">
           <el-table :data="billStore.paidBills" stripe style="width: 100%">
             <el-table-column prop="anglerName" label="钓友" width="120" />
             <el-table-column prop="spotNames" label="钓位" min-width="180" show-overflow-tooltip />
@@ -124,17 +188,29 @@
       </el-tabs>
     </div>
 
-    <el-dialog v-model="weighingVisible" title="渔获过磅称重" width="560px">
+    <el-dialog v-model="weighingVisible" title="渔获过磅称重" width="580px">
       <div v-if="currentOcc" class="weighing-header">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="钓友">{{ currentOcc.anglerName }}</el-descriptions-item>
           <el-descriptions-item label="钓位">
-            <el-tag v-for="sid in currentOcc.spotIds" :key="sid" type="primary" effect="light" size="small" style="margin-right: 4px;">
+            <el-tag
+              v-for="sid in currentOcc.spotIds"
+              :key="sid"
+              type="primary"
+              effect="light"
+              size="small"
+              style="margin-right: 4px;"
+            >
               {{ spotStore.getSpotById(sid)?.code }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="开始时间">{{ currentOcc.startTime }}</el-descriptions-item>
-          <el-descriptions-item label="已垂钓">{{ getDuration(currentOcc) }}</el-descriptions-item>
+          <el-descriptions-item label="结束时间">
+            {{ currentOcc.endTime || '仍在垂钓中' }}
+          </el-descriptions-item>
+          <el-descriptions-item label="已垂钓" :span="2">
+            <el-tag type="primary">{{ getDuration(currentOcc) }}</el-tag>
+          </el-descriptions-item>
         </el-descriptions>
       </div>
 
@@ -222,7 +298,7 @@
           <div>
             <el-button @click="weighingVisible = false">关闭</el-button>
             <el-button type="primary" @click="weighingVisible = false; if(currentOcc) generateBill(currentOcc)">
-              去结算
+              去结算出账单
             </el-button>
           </div>
         </div>
@@ -357,14 +433,39 @@ onMounted(() => {
   if (occId) {
     const occ = occStore.getOccupationById(occId)
     if (occ) {
-      setTimeout(() => generateBill(occ), 200)
+      setTimeout(() => {
+        if (occ.status === 'pending_bill' || occ.status === 'completed') {
+          generatePendingBill(occ)
+        } else {
+          generateBill(occ)
+        }
+      }, 200)
     }
   }
+  const tab = route.query.tab as string
+  if (tab) activeTab.value = tab
 })
 
 function getDuration(occ: Occupation) {
-  const h = calcHours(occ.startTime, formatDateTime(new Date()))
+  const end = occ.endTime || formatDateTime(new Date())
+  const h = calcHours(occ.startTime, end)
   return `${h.toFixed(1)}小时`
+}
+
+function getFixedDuration(occ: Occupation) {
+  if (!occ.endTime) return getDuration(occ).replace('小时', '')
+  const h = calcHours(occ.startTime, occ.endTime)
+  return h.toFixed(2)
+}
+
+function getCatchCount(occId: string) {
+  return billStore.getCatchesByOccupation(occId).length
+}
+
+function getCatchTotal(occId: string) {
+  return roundTo(
+    billStore.getCatchesByOccupation(occId).reduce((s, c) => s + c.weight * c.unitPrice, 0)
+  )
 }
 
 function openWeighing(occ: Occupation) {
@@ -396,7 +497,7 @@ function deleteCatch(id: string) {
   }
 }
 
-function generateBill(occ: Occupation) {
+function doGenerateBill(occ: Occupation, useFixedEndTime: boolean = false) {
   ElMessageBox.prompt('请输入优惠金额（元）', '生成账单', {
     confirmButtonText: '确认生成',
     cancelButtonText: '取消',
@@ -410,8 +511,12 @@ function generateBill(occ: Occupation) {
   }).then(({ value }) => {
     try {
       const discount = parseFloat(value || '0')
-      const endTime = formatDateTime(new Date())
-      occStore.endOccupation(occ.id)
+      const endTime = useFixedEndTime && occ.endTime
+        ? occ.endTime
+        : formatDateTime(new Date())
+      if (occ.status === 'active') {
+        occStore.endOccupation(occ.id)
+      }
       const bill = billStore.generateBill(occ.id, endTime, discount)
       ElMessage.success('账单已生成')
       currentBill.value = bill
@@ -424,6 +529,14 @@ function generateBill(occ: Occupation) {
   }).catch(() => {})
 }
 
+function generateBill(occ: Occupation) {
+  doGenerateBill(occ, false)
+}
+
+function generatePendingBill(occ: Occupation) {
+  doGenerateBill(occ, true)
+}
+
 function viewBill(bill: Bill) {
   currentBill.value = bill
   billDetailVisible.value = true
@@ -431,13 +544,13 @@ function viewBill(bill: Bill) {
 
 function handlePay(bill: Bill) {
   ElMessageBox.confirm(
-    `确认收到钓友 ${bill.anglerName} 的款项 ¥${bill.totalAmount.toFixed(2)} 吗？`,
+    `确认收到钓友 ${bill.anglerName} 的款项 ¥${bill.totalAmount.toFixed(2)} 吗？收款后本条记录将归档到已结算列表。`,
     '收款确认',
     { confirmButtonText: '确认收款', cancelButtonText: '取消', type: 'success' }
   ).then(() => {
     billStore.markPaid(bill.id)
     currentBill.value = billStore.getBillById(bill.id) || null
-    ElMessage.success('收款成功')
+    ElMessage.success('收款成功，已归档')
   }).catch(() => {})
 }
 </script>
@@ -445,6 +558,10 @@ function handlePay(bill: Bill) {
 <style scoped>
 .empty-tip {
   padding: 30px 0;
+}
+
+.mb-12 {
+  margin-bottom: 12px;
 }
 
 .weighing-header {

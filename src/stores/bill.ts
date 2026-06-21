@@ -78,12 +78,13 @@ export const useBillStore = defineStore('bill', () => {
       ? (spotStore.getSpotById(occ.spotIds[0])?.basePrice || 30) / 30
       : 1
 
-    const billing = pricingStore.calculateBilling(occ.startTime, endTime, basePrice, occ.spotIds.length)
+    const actualStartTime = occ.startTime
+    const billing = pricingStore.calculateBilling(actualStartTime, endTime, basePrice, occ.spotIds.length)
 
     const occCatches = getCatchesByOccupation(occupationId)
     const catchTotal = roundTo(occCatches.reduce((sum, c) => sum + c.weight * c.unitPrice, 0))
 
-    const totalAmount = roundTo(billing.total + catchTotal - discount)
+    const totalAmount = roundTo(Math.max(0, billing.total + catchTotal - discount))
 
     const existing = getBillByOccupation(occupationId)
     if (existing) {
@@ -97,6 +98,7 @@ export const useBillStore = defineStore('bill', () => {
         discount,
         totalAmount
       })
+      occStore.markBilled(occupationId)
       save()
       return existing
     }
@@ -108,7 +110,7 @@ export const useBillStore = defineStore('bill', () => {
       anglerName: occ.anglerName,
       spotIds: occ.spotIds,
       spotNames,
-      startTime: occ.startTime,
+      startTime: actualStartTime,
       endTime,
       totalHours: billing.totalHours,
       billingDetails: billing.details,
@@ -121,6 +123,7 @@ export const useBillStore = defineStore('bill', () => {
       createTime: formatDateTime(new Date())
     }
     bills.value.push(bill)
+    occStore.markBilled(occupationId)
     save()
     return bill
   }
@@ -130,6 +133,8 @@ export const useBillStore = defineStore('bill', () => {
     if (bill) {
       bill.paid = true
       bill.payTime = formatDateTime(new Date())
+      const occStore = useOccupationStore()
+      occStore.markPaid(bill.occupationId)
       save()
     }
   }
