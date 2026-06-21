@@ -4,7 +4,7 @@ import type { Bill, CatchRecord } from '@/types'
 import { genId, formatDateTime, roundTo } from '@/utils'
 import { usePricingStore } from './pricing'
 import { useSpotStore } from './spot'
-import { useOccupationStore } from './occupation'
+import { useOccupationStore, getEffectiveStartTime } from './occupation'
 
 export const useBillStore = defineStore('bill', () => {
   const bills = ref<Bill[]>(loadFromStorage())
@@ -78,7 +78,7 @@ export const useBillStore = defineStore('bill', () => {
       ? (spotStore.getSpotById(occ.spotIds[0])?.basePrice || 30) / 30
       : 1
 
-    const actualStartTime = occ.startTime
+    const actualStartTime = getEffectiveStartTime(occ)
     const billing = pricingStore.calculateBilling(actualStartTime, endTime, basePrice, occ.spotIds.length)
 
     const occCatches = getCatchesByOccupation(occupationId)
@@ -86,10 +86,15 @@ export const useBillStore = defineStore('bill', () => {
 
     const totalAmount = roundTo(Math.max(0, billing.total + catchTotal - discount))
 
+    const expectedStartTime = occ.expectedStartTime || occ.startTime
+
     const existing = getBillByOccupation(occupationId)
     if (existing) {
       Object.assign(existing, {
+        expectedStartTime,
+        actualStartTime,
         endTime,
+        startTime: actualStartTime,
         totalHours: billing.totalHours,
         billingDetails: billing.details,
         fishingFee: billing.total,
@@ -110,8 +115,10 @@ export const useBillStore = defineStore('bill', () => {
       anglerName: occ.anglerName,
       spotIds: occ.spotIds,
       spotNames,
-      startTime: actualStartTime,
+      expectedStartTime,
+      actualStartTime,
       endTime,
+      startTime: actualStartTime,
       totalHours: billing.totalHours,
       billingDetails: billing.details,
       fishingFee: billing.total,

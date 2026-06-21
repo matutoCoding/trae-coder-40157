@@ -22,7 +22,8 @@
             style="width: 160px;"
           />
           <el-tag type="success" effect="light">空闲 {{ availableCount }}</el-tag>
-          <el-tag type="danger" effect="light">占用 {{ occupiedCount }}</el-tag>
+          <el-tag type="primary" effect="light">已预约 {{ reservedCount }}</el-tag>
+          <el-tag type="danger" effect="light">垂钓中 {{ activeCount }}</el-tag>
           <el-tag type="info" effect="light">维护 {{ maintenanceCount }}</el-tag>
         </div>
       </div>
@@ -52,13 +53,13 @@
             <div class="spot-code">{{ spot.code }}</div>
             <div class="spot-name">{{ spot.name }}</div>
             <div class="spot-type">{{ getTypeLabel(spot.type) }}</div>
-            <div v-if="getSpotStatus(spot.id) === 'occupied'" class="spot-angler">
+            <div v-if="getSpotStatus(spot.id) === 'active'" class="spot-angler">
               <el-icon><User /></el-icon>
               {{ getSpotAngler(spot.id) }}
             </div>
-            <div v-else-if="getSpotStatus(spot.id) === 'future'" class="spot-booked">
+            <div v-else-if="getSpotStatus(spot.id) === 'reserved'" class="spot-reserved">
               <el-icon><Clock /></el-icon>
-              已预订
+              已预约
             </div>
             <div v-else-if="spot.status === 'maintenance'" class="spot-maint">
               <el-icon><Tools /></el-icon>
@@ -72,8 +73,11 @@
                 v-for="occ in getSpotOccupations(spot.id)"
                 :key="occ.id"
                 class="timeline-item"
+                :class="'tl-' + occ.status"
                 :title="`${occ.anglerName} ${formatShortTime(occ.expectedStartTime || occ.startTime)} ~ ${formatShortTime(occ.expectedEndTime || '正在垂钓')}`"
               >
+                <span v-if="occ.status === 'reserved'">[预]</span>
+                <span v-else-if="occ.status === 'active'">[钓]</span>
                 {{ occ.anglerName }}
               </div>
             </div>
@@ -87,7 +91,7 @@
         <el-icon><List /></el-icon>
         {{ viewDateLabel }}的排期记录
       </div>
-      <el-table :data="scheduledOccs" stripe style="width: 100%">
+      <el-table :data="scheduledOccs" stripe style="width: 100%" :row-key="row => row.id">
         <el-table-column prop="anglerName" label="钓友" width="120" />
         <el-table-column label="钓位" min-width="180">
           <template #default="{ row }">
@@ -101,17 +105,35 @@
               {{ spotStore.getSpotById(sid)?.code }}
             </el-tag>
             <el-tag v-if="row.isMerged" type="warning" size="small">合并</el-tag>
+            <el-tag v-if="row.splitFromId" type="info" size="small">拆分后</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="预订时段" width="340">
+        <el-table-column label="预约时间" width="200">
           <template #default="{ row }">
-            <div>
-              <el-icon><Star /></el-icon>
-              {{ row.expectedStartTime || row.startTime }}
+            <div style="font-size: 12px;">
+              <el-icon style="color: #e6a23c;"><Star /></el-icon>
+              {{ formatShortDate(row.expectedStartTime || row.startTime) }}
             </div>
-            <div v-if="row.expectedEndTime || row.endTime" class="text-muted">
-              至 {{ row.expectedEndTime || row.endTime }}
+            <div class="text-muted" style="font-size: 12px;">
+              至 {{ formatShortDate(row.expectedEndTime || '不限') }}
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="实际开钓" width="180">
+          <template #default="{ row }">
+            <div v-if="row.actualStartTime" style="font-size: 12px; color: #67c23a;">
+              <el-icon><CircleCheck /></el-icon>
+              {{ formatShortDate(row.actualStartTime) }}
+            </div>
+            <span v-else class="text-muted" style="font-size: 12px;">未开钓</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="收竿时间" width="180">
+          <template #default="{ row }">
+            <div v-if="row.endTime" style="font-size: 12px;">
+              {{ formatShortDate(row.endTime) }}
+            </div>
+            <span v-else class="text-muted" style="font-size: 12px;">垂钓中</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -121,11 +143,17 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="档位/时长" width="180">
+        <el-table-column label="档位/时长" width="160">
           <template #default="{ row }">
             <div v-if="row.status === 'active' || row.status === 'pending_bill'">
               <span class="text-primary">{{ getCurrentTier(row)?.name || '-' }}</span>
               <div class="text-muted">{{ getDuration(row) }}</div>
+            </div>
+            <div v-else-if="row.status === 'reserved'">
+              <span class="text-muted">等待开钓</span>
+              <div class="text-muted" v-if="row.expectedEndTime">
+                预{{ getExpectedDuration(row) }}小时
+              </div>
             </div>
             <span v-else class="text-muted">已结束</span>
           </template>
@@ -143,10 +171,49 @@
             <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="260" fixed="right">
+          <template #default="{ row }">
+            <template v-if="row.status === 'reserved'">
+              <el-button size="small" type="success" @click="handleCheckIn(row)">
+                <el-icon><Right /></el-icon>
+                到店开钓
+              </el-button>
+              <el-button size="small" @click="handleReschedule(row)">
+                <el-icon><Edit /></el-icon>
+                改期
+              </el-button>
+              <el-button size="small" type="danger" @click="handleCancel(row)">
+                <el-icon><Close /></el-icon>
+                取消
+              </el-button>
+            </template>
+            <template v-else-if="row.status === 'active'">
+              <el-button size="small" @click="goToBilling(row)">
+                <el-icon><Tickets /></el-icon>
+                去结算
+              </el-button>
+              <el-button size="small" @click="goToMerge(row)">
+                <el-icon><Connection /></el-icon>
+                拆分
+              </el-button>
+            </template>
+            <template v-else-if="row.status === 'pending_bill'">
+              <el-button size="small" type="primary" @click="goToBilling(row, 'pending')">
+                <el-icon><Tickets /></el-icon>
+                补录结算
+              </el-button>
+            </template>
+            <template v-else-if="row.billingStatus === 'unbilled'">
+              <el-button size="small" type="primary" @click="goToBilling(row)">
+                生成账单
+              </el-button>
+            </template>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
-    <el-dialog v-model="reserveDialogVisible" title="预订钓位" width="600px">
+    <el-dialog v-model="reserveDialogVisible" title="预订钓位" width="620px">
       <el-form :model="reserveForm" label-width="110px">
         <el-form-item label="预订日期">
           <el-date-picker
@@ -178,6 +245,10 @@
           <div class="text-muted mt-8" style="font-size: 12px;">
             不填结束时间则按实际收竿时间计算
           </div>
+        </el-form-item>
+        <el-form-item label="立即开钓">
+          <el-switch v-model="reserveForm.checkInNow" />
+          <span class="text-muted ml-8" style="font-size: 12px;">勾选后直接开始计费（无需再点"到店开钓"）</span>
         </el-form-item>
 
         <el-form-item label="选择钓位">
@@ -218,18 +289,76 @@
         <el-button type="primary" @click="confirmReserve">确认预订</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="rescheduleDialogVisible" title="改期" width="500px">
+      <el-descriptions v-if="rescheduleRow" :column="1" border size="small" class="mb-16">
+        <el-descriptions-item label="钓友">{{ rescheduleRow.anglerName }}</el-descriptions-item>
+        <el-descriptions-item label="钓位">
+          <el-tag
+            v-for="sid in rescheduleRow.spotIds"
+            :key="sid"
+            type="primary"
+            effect="light"
+            size="small"
+            style="margin-right: 4px;"
+          >
+            {{ spotStore.getSpotById(sid)?.code }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="原预订时间">
+          {{ rescheduleRow.expectedStartTime || rescheduleRow.startTime }}
+          <span v-if="rescheduleRow.expectedEndTime"> ~ {{ rescheduleRow.expectedEndTime }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-form :model="rescheduleForm" label-width="100px">
+        <el-form-item label="新日期">
+          <el-date-picker
+            v-model="rescheduleForm.date"
+            type="date"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            placeholder="选择新日期"
+            style="width: 100%;"
+          />
+        </el-form-item>
+        <el-form-item label="新开始时间">
+          <el-time-picker
+            v-model="rescheduleForm.startTime"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="选择开始时间"
+            style="width: 100%;"
+          />
+        </el-form-item>
+        <el-form-item label="新结束时间">
+          <el-time-picker
+            v-model="rescheduleForm.endTime"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="选择结束时间（可选）"
+            style="width: 100%;"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rescheduleDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmReschedule">确认改期</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { useSpotStore } from '@/stores/spot'
-import { useOccupationStore, useAnglerStore } from '@/stores/occupation'
+import { useOccupationStore, useAnglerStore, getEffectiveStartTime } from '@/stores/occupation'
 import { usePricingStore } from '@/stores/pricing'
 import type { FishingSpot, Occupation } from '@/types'
 import { calcHours, formatDateTime, formatDate } from '@/utils'
 
+const router = useRouter()
 const spotStore = useSpotStore()
 const occStore = useOccupationStore()
 const anglerStore = useAnglerStore()
@@ -272,7 +401,7 @@ const scheduledOccs = computed(() => {
   const { start, end } = getTimeRangeStartEnd()
   if (!start && !end) return allOccsForDate.value
   return allOccsForDate.value.filter(o => {
-    const os = new Date(o.expectedStartTime || o.startTime).getTime()
+    const os = new Date(getEffectiveStartTime(o)).getTime()
     const oe = o.expectedEndTime ? new Date(o.expectedEndTime).getTime()
       : o.endTime ? new Date(o.endTime).getTime()
       : Date.now()
@@ -282,12 +411,28 @@ const scheduledOccs = computed(() => {
   })
 })
 
+const reservedCount = computed(() =>
+  scheduledOccs.value.filter(o => o.status === 'reserved').length
+)
+const activeCount = computed(() =>
+  scheduledOccs.value.filter(o => o.status === 'active').length
+)
+
 const reserveDialogVisible = ref(false)
 const reserveForm = reactive({
   spotIds: [] as string[],
   name: '',
   phone: '',
   date: viewDate.value,
+  startTime: '08:00',
+  endTime: '',
+  checkInNow: false
+})
+
+const rescheduleDialogVisible = ref(false)
+const rescheduleRow = ref<Occupation | null>(null)
+const rescheduleForm = reactive({
+  date: '',
   startTime: '08:00',
   endTime: ''
 })
@@ -305,15 +450,14 @@ const isContinuous = computed(() => {
 })
 
 const availableCount = computed(() => {
-  const { start, end } = getTimeRangeStartEnd()
-  const checkAt = start || `${viewDate.value} 12:00:00`
   return spotStore.spots.filter(s => {
     if (s.status !== 'available') return false
-    return !scheduledOccs.value.some(o => o.spotIds.includes(s.id))
+    return !scheduledOccs.value.some(o =>
+      o.spotIds.includes(s.id) && (o.status === 'reserved' || o.status === 'active')
+    )
   }).length
 })
 
-const occupiedCount = computed(() => scheduledOccs.value.length)
 const maintenanceCount = computed(() => spotStore.spots.filter(s => s.status === 'maintenance').length)
 
 function getTypeLabel(type: FishingSpot['type']) {
@@ -325,7 +469,7 @@ function getSpotOccupations(spotId: string): Occupation[] {
   return scheduledOccs.value.filter(o => o.spotIds.includes(spotId))
 }
 
-function getSpotStatus(spotId: string): 'available' | 'occupied' | 'future' | 'maintenance' {
+function getSpotStatus(spotId: string): 'available' | 'active' | 'reserved' | 'maintenance' {
   const spot = spotStore.getSpotById(spotId)
   if (spot?.status === 'maintenance' || spot?.status === 'closed') return 'maintenance'
 
@@ -334,28 +478,38 @@ function getSpotStatus(spotId: string): 'available' | 'occupied' | 'future' | 'm
   if (occs.length === 0) return 'available'
 
   const active = occs.find(o => {
-    const s = new Date(o.expectedStartTime || o.startTime).getTime()
-    const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
-    return now >= s && now < e
+    if (o.status === 'active') {
+      const s = new Date(getEffectiveStartTime(o)).getTime()
+      const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
+      return now >= s && now < e
+    }
+    return false
   })
-  if (active) return 'occupied'
-  return 'future'
+  if (active) return 'active'
+
+  const reserved = occs.find(o => o.status === 'reserved')
+  if (reserved) return 'reserved'
+
+  return 'available'
 }
 
 function getSpotClass(id: string) {
   const st = getSpotStatus(id)
   if (st === 'maintenance') return 'spot-maint-card'
-  if (st === 'occupied') return 'spot-occupied'
-  if (st === 'future') return 'spot-future'
+  if (st === 'active') return 'spot-occupied'
+  if (st === 'reserved') return 'spot-future'
   return 'spot-available'
 }
 
 function getSpotAngler(id: string) {
   const now = Date.now()
   const occ = getSpotOccupations(id).find(o => {
-    const s = new Date(o.expectedStartTime || o.startTime).getTime()
-    const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
-    return now >= s && now < e
+    if (o.status === 'active') {
+      const s = new Date(getEffectiveStartTime(o)).getTime()
+      const e = o.expectedEndTime ? new Date(o.expectedEndTime).getTime() : Infinity
+      return now >= s && now < e
+    }
+    return false
   })
   return occ?.anglerName || '-'
 }
@@ -365,29 +519,47 @@ function formatShortTime(s: string) {
   return s.split(' ')[1]?.substring(0, 5) || s.substring(5, 16)
 }
 
+function formatShortDate(s: string) {
+  if (!s) return ''
+  return s.substring(5, 16)
+}
+
 function getOccStatusType(occ: Occupation) {
+  if (occ.status === 'reserved') return 'warning'
   if (occ.status === 'active') return 'success'
   if (occ.status === 'pending_bill') return 'warning'
   if (occ.status === 'completed') return 'info'
+  if (occ.status === 'cancelled') return 'info'
   return 'info'
 }
 
 function getOccStatusLabel(occ: Occupation) {
+  if (occ.status === 'reserved') return '已预约'
   if (occ.status === 'active') return '垂钓中'
   if (occ.status === 'pending_bill') return '待结算'
   if (occ.status === 'completed') return '已结束'
+  if (occ.status === 'cancelled') return '已取消'
+  if (occ.status === 'split') return '已拆分'
   return occ.status
 }
 
 function getDuration(occ: Occupation) {
-  const h = calcHours(occ.startTime, formatDateTime(new Date()))
+  const start = getEffectiveStartTime(occ)
+  const end = occ.endTime || formatDateTime(new Date())
+  const h = calcHours(start, end)
   return `${h.toFixed(1)}小时`
+}
+
+function getExpectedDuration(occ: Occupation) {
+  if (!occ.expectedEndTime || !occ.expectedStartTime) return 0
+  return calcHours(occ.expectedStartTime, occ.expectedEndTime).toFixed(1)
 }
 
 function getBillingInfo(occ: Occupation) {
   const spot = spotStore.getSpotById(occ.spotId)
   const basePrice = spot ? spot.basePrice / 30 : 1
-  return pricingStore.calculateBilling(occ.startTime, formatDateTime(new Date()), basePrice, occ.spotIds.length)
+  const start = getEffectiveStartTime(occ)
+  return pricingStore.calculateBilling(start, formatDateTime(new Date()), basePrice, occ.spotIds.length)
 }
 
 function getCurrentTier(occ: Occupation) {
@@ -418,15 +590,15 @@ function handleSpotClick(id: string) {
     return
   }
   const status = getSpotStatus(id)
-  if (status === 'occupied' || status === 'future') {
+  if (status === 'active' || status === 'reserved') {
     const occs = getSpotOccupations(id)
     if (occs.length > 0) {
       const info = occs.map(o =>
-        `${o.anglerName} ${formatShortTime(o.expectedStartTime || o.startTime)}~${formatShortTime(o.expectedEndTime || '进行中')}`
+        `${getOccStatusLabel(o)} · ${o.anglerName} ${formatShortTime(o.expectedStartTime || o.startTime)}~${formatShortTime(o.expectedEndTime || '进行中')}`
       ).join('\n')
       ElMessageBox.alert(
         `该钓位排期：\n${info}`,
-        '钓位已占用/预订',
+        '钓位已预订/占用',
         { confirmButtonText: '知道了', type: 'info' }
       )
     }
@@ -436,6 +608,7 @@ function handleSpotClick(id: string) {
   reserveForm.date = viewDate.value
   reserveForm.name = ''
   reserveForm.phone = ''
+  reserveForm.checkInNow = false
   reserveDialogVisible.value = true
 }
 
@@ -474,16 +647,88 @@ function confirmReserve() {
     for (const seg of segments) {
       occStore.createOccupation(seg, angler.id, angler.name, {
         expectedStartTime: expectedStart,
-        expectedEndTime: expectedEnd
+        expectedEndTime: expectedEnd,
+        checkInImmediately: reserveForm.checkInNow
       })
       created++
     }
-    ElMessage.success(`预订成功！共 ${created} 段占用，涉及 ${reserveForm.spotIds.length} 个钓位`)
+    ElMessage.success(`预订成功！共 ${created} 段${reserveForm.checkInNow ? '已开钓' : '预约'}，涉及 ${reserveForm.spotIds.length} 个钓位`)
     reserveDialogVisible.value = false
     reserveForm.spotIds = []
   } catch (e: any) {
     ElMessage.error(e.message || '预订失败')
   }
+}
+
+function handleCheckIn(row: Occupation) {
+  ElMessageBox.confirm(
+    `确定 ${row.anglerName} 已到店，开始垂钓吗？\n开钓后将开始计费。`,
+    '到店确认',
+    { confirmButtonText: '确认开钓', cancelButtonText: '取消', type: 'success' }
+  ).then(() => {
+    try {
+      occStore.checkIn(row.id)
+      ElMessage.success('已开钓，开始计费')
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
+  }).catch(() => {})
+}
+
+function handleReschedule(row: Occupation) {
+  rescheduleRow.value = row
+  const dt = (row.expectedStartTime || row.startTime).split(' ')
+  rescheduleForm.date = dt[0]
+  rescheduleForm.startTime = dt[1]?.substring(0, 5) || '08:00'
+  rescheduleForm.endTime = row.expectedEndTime ? row.expectedEndTime.split(' ')[1].substring(0, 5) : ''
+  rescheduleDialogVisible.value = true
+}
+
+function confirmReschedule() {
+  if (!rescheduleRow.value) return
+  if (!rescheduleForm.date || !rescheduleForm.startTime) {
+    ElMessage.warning('请选择日期和时间')
+    return
+  }
+  const newStart = `${rescheduleForm.date} ${rescheduleForm.startTime}:00`
+  const newEnd = rescheduleForm.endTime ? `${rescheduleForm.date} ${rescheduleForm.endTime}:00` : undefined
+
+  if (newEnd && new Date(newEnd).getTime() <= new Date(newStart).getTime()) {
+    ElMessage.warning('结束时间必须晚于开始时间')
+    return
+  }
+
+  try {
+    occStore.reschedule(rescheduleRow.value.id, newStart, newEnd)
+    ElMessage.success('改期成功')
+    rescheduleDialogVisible.value = false
+    rescheduleRow.value = null
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+function handleCancel(row: Occupation) {
+  ElMessageBox.confirm(
+    `确定取消 ${row.anglerName} 的预约吗？\n取消后钓位将重新开放。`,
+    '取消确认',
+    { confirmButtonText: '确认取消', cancelButtonText: '保留', type: 'warning' }
+  ).then(() => {
+    try {
+      occStore.cancelReservation(row.id)
+      ElMessage.success('已取消预约，钓位已释放')
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
+  }).catch(() => {})
+}
+
+function goToBilling(row: Occupation, tab: string = 'active') {
+  router.push({ path: '/billing', query: { occId: row.id, tab } })
+}
+
+function goToMerge(row: Occupation) {
+  router.push({ path: '/merge', query: { occId: row.id } })
 }
 </script>
 
@@ -584,7 +829,7 @@ function confirmReserve() {
   gap: 4px;
 }
 
-.spot-booked {
+.spot-reserved {
   margin-top: 8px;
   font-size: 13px;
   color: #e6a23c;
@@ -626,6 +871,16 @@ function confirmReserve() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tl-reserved {
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+
+.tl-active {
+  background: #f0f9eb;
+  color: #67c23a;
 }
 
 .spot-picker {
@@ -672,5 +927,9 @@ function confirmReserve() {
   font-size: 12px;
   color: #67c23a;
   margin-top: 2px;
+}
+
+.ml-8 {
+  margin-left: 8px;
 }
 </style>

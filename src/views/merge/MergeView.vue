@@ -36,6 +36,10 @@
             style="width: 220px;"
           />
         </el-form-item>
+        <el-form-item label="立即开钓">
+          <el-switch v-model="mergeForm.checkInNow" />
+          <span class="text-muted ml-8" style="font-size: 12px;">勾选后直接开始计费</span>
+        </el-form-item>
       </el-form>
 
       <div class="merge-area">
@@ -145,8 +149,11 @@
                 v-for="sid in row.spotIds"
                 :key="sid"
                 class="occ-spot-chip"
-                :class="{ 'chip-main': selectedSplitRow?.id === row.id && selectedSplitSpot === sid }"
-                @click="selectSplitSpot(row, sid)"
+                :class="{ 
+                  'chip-main': selectedSplitRow?.id === row.id && selectedSplitSpot === sid,
+                  'chip-disabled': row.status !== 'active'
+                }"
+                @click="row.status === 'active' && selectSplitSpot(row, sid)"
               >
                 <span>{{ spotStore.getSpotById(sid)?.code }}</span>
                 <el-icon v-if="selectedSplitRow?.id === row.id && selectedSplitSpot === sid">
@@ -155,44 +162,72 @@
               </div>
             </div>
             <div class="text-muted mt-4" style="font-size: 12px;">
-              已连续合并为 {{ row.spotIds.length }} 个相邻钓位，点击选择要拆分收竿的钓位
+              <el-tag v-if="row.status === 'reserved'" type="warning" size="small">已预约</el-tag>
+              <el-tag v-else type="success" size="small">垂钓中</el-tag>
+              已连续合并为 {{ row.spotIds.length }} 个相邻钓位
+              <span v-if="row.status === 'active'">，点击选择要拆分收竿的钓位</span>
+              <span v-else>，到店后可开钓</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="时间" width="280">
+        <el-table-column label="预约时间" width="170">
           <template #default="{ row }">
-            <div>{{ row.startTime }}</div>
-            <div class="text-muted">
-              <el-icon><Timer /></el-icon>
-              已垂钓 {{ getDuration(row) }}
-              <span v-if="row.expectedEndTime"> / 预计至 {{ row.expectedEndTime }}</span>
+            <div style="font-size: 12px;">{{ formatShort(row.expectedStartTime || row.startTime) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="实际开钓" width="170">
+          <template #default="{ row }">
+            <div v-if="row.actualStartTime" style="font-size: 12px; color: #67c23a;">
+              {{ formatShort(row.actualStartTime) }}
+            </div>
+            <span v-else class="text-muted" style="font-size: 12px;">未开钓</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="时长/档位" width="160">
+          <template #default="{ row }">
+            <div v-if="row.status === 'active'">
+              <span class="text-primary">{{ getCurrentTier(row)?.name || '-' }}</span>
+              <div class="text-muted">{{ getDuration(row) }}</div>
+            </div>
+            <div v-else-if="row.status === 'reserved'">
+              <span class="text-muted">等待开钓</span>
+              <div class="text-muted" v-if="row.expectedEndTime">
+                预{{ getExpectedDuration(row) }}h
+              </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="档位" width="140">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
-            <span class="text-primary">{{ getCurrentTier(row)?.name || '-' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              size="small"
-              type="warning"
-              :disabled="!canSplit(row)"
-              @click="splitSelected(row)"
-            >
-              <el-icon><Scissor /></el-icon>
-              拆分选中收竿
-            </el-button>
-            <el-button
-              size="small"
-              type="primary"
-              @click="goToBill(row)"
-            >
-              <el-icon><Tickets /></el-icon>
-              整段收竿
-            </el-button>
+            <template v-if="row.status === 'reserved'">
+              <el-button size="small" type="success" @click="handleCheckIn(row)">
+                <el-icon><Right /></el-icon>
+                到店开钓
+              </el-button>
+              <el-button size="small" @click="goToSchedule(row)">
+                <el-icon><Calendar /></el-icon>
+                改期
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button
+                size="small"
+                type="warning"
+                :disabled="!canSplit(row)"
+                @click="splitSelected(row)"
+              >
+                <el-icon><Scissor /></el-icon>
+                拆分选中收竿
+              </el-button>
+              <el-button
+                size="small"
+                type="primary"
+                @click="goToBill(row)"
+              >
+                <el-icon><Tickets /></el-icon>
+                整段收竿
+              </el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -205,9 +240,9 @@
     <div class="card mt-16">
       <div class="section-title">
         <el-icon><Timer /></el-icon>
-        所有进行中的占用（含已拆分独立段）
+        所有占用记录（含已预约和进行中）
       </div>
-      <el-table :data="occStore.activeOccupations" stripe style="width: 100%">
+      <el-table :data="allOccupations" stripe style="width: 100%">
         <el-table-column prop="anglerName" label="钓友" width="120" />
         <el-table-column label="钓位" min-width="180">
           <template #default="{ row }">
@@ -224,15 +259,40 @@
             <el-tag v-if="row.splitFromId" type="info" size="small">拆分后</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="开始时间" width="170">
-          <template #default="{ row }">{{ row.startTime }}</template>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="getOccStatusType(row)" size="small">
+              {{ getOccStatusLabel(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="预约时间" width="160">
+          <template #default="{ row }">
+            <span style="font-size: 12px;">{{ formatShort(row.expectedStartTime || row.startTime) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="实际开钓" width="160">
+          <template #default="{ row }">
+            <span v-if="row.actualStartTime" style="font-size: 12px; color: #67c23a;">
+              {{ formatShort(row.actualStartTime) }}
+            </span>
+            <span v-else class="text-muted" style="font-size: 12px;">未开钓</span>
+          </template>
         </el-table-column>
         <el-table-column label="垂钓时长" width="110">
           <template #default="{ row }">{{ getDuration(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="goToBill(row)">收竿结算</el-button>
+            <el-button v-if="row.status === 'reserved'" size="small" type="success" @click="handleCheckIn(row)">
+              到店开钓
+            </el-button>
+            <el-button v-else-if="row.status === 'active'" size="small" type="primary" @click="goToBill(row)">
+              收竿结算
+            </el-button>
+            <el-button v-else-if="row.status === 'pending_bill'" size="small" type="primary" @click="goToBill(row, 'pending')">
+              补录结算
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -245,7 +305,7 @@ import { ref, reactive, computed, h } from 'vue'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useSpotStore } from '@/stores/spot'
-import { useOccupationStore, useAnglerStore } from '@/stores/occupation'
+import { useOccupationStore, useAnglerStore, getEffectiveStartTime } from '@/stores/occupation'
 import { usePricingStore } from '@/stores/pricing'
 import type { Occupation } from '@/types'
 import { calcHours, formatDateTime } from '@/utils'
@@ -262,14 +322,24 @@ const mergeForm = reactive({
   name: '',
   phone: '',
   startTime: now,
-  endTime: ''
+  endTime: '',
+  checkInNow: false
 })
 
 const selectedSplitRow = ref<Occupation | null>(null)
 const selectedSplitSpot = ref<string>('')
 
 const mergedOccupations = computed(() =>
-  occStore.activeOccupations.filter(o => o.isMerged && o.spotIds.length > 1)
+  occStore.occupations.filter(o => 
+    (o.status === 'active' || o.status === 'reserved') && 
+    o.isMerged && o.spotIds.length > 1
+  )
+)
+
+const allOccupations = computed(() =>
+  occStore.occupations.filter(o => 
+    o.status === 'active' || o.status === 'reserved' || o.status === 'pending_bill'
+  )
 )
 
 const previewSegments = computed(() => {
@@ -340,12 +410,14 @@ function confirmMergeCreate() {
     for (const seg of segs) {
       occStore.createOccupation(seg, angler.id, angler.name, {
         expectedStartTime: mergeForm.startTime,
-        expectedEndTime: mergeForm.endTime || undefined
+        expectedEndTime: mergeForm.endTime || undefined,
+        checkInImmediately: mergeForm.checkInNow
       })
       created++
     }
-    ElMessage.success(`预订成功！共生成 ${created} 段占用，涉及 ${mergeForm.selectedIds.length} 个钓位`)
+    ElMessage.success(`预订成功！共生成 ${created} 段${mergeForm.checkInNow ? '已开钓' : '预约'}，涉及 ${mergeForm.selectedIds.length} 个钓位`)
     mergeForm.selectedIds = []
+    mergeForm.checkInNow = false
     selectedSplitRow.value = null
     selectedSplitSpot.value = ''
   } catch (e: any) {
@@ -432,19 +504,66 @@ function splitSelected(row: Occupation) {
 }
 
 function getDuration(occ: Occupation) {
-  const h = calcHours(occ.startTime, formatDateTime(new Date()))
+  const start = getEffectiveStartTime(occ)
+  const end = occ.endTime || formatDateTime(new Date())
+  const h = calcHours(start, end)
   return `${h.toFixed(1)}小时`
+}
+
+function getExpectedDuration(occ: Occupation) {
+  if (!occ.expectedEndTime || !occ.expectedStartTime) return 0
+  return calcHours(occ.expectedStartTime, occ.expectedEndTime).toFixed(1)
 }
 
 function getCurrentTier(occ: Occupation) {
   const spot = spotStore.getSpotById(occ.spotId)
   const basePrice = spot ? spot.basePrice / 30 : 1
-  const info = pricingStore.calculateBilling(occ.startTime, formatDateTime(new Date()), basePrice, occ.spotIds.length)
+  const start = getEffectiveStartTime(occ)
+  const info = pricingStore.calculateBilling(start, formatDateTime(new Date()), basePrice, occ.spotIds.length)
   return info.currentTier
 }
 
-function goToBill(row: Occupation) {
-  router.push({ path: '/billing', query: { occId: row.id } })
+function formatShort(s: string) {
+  if (!s) return ''
+  return s.substring(5, 16)
+}
+
+function getOccStatusType(occ: Occupation) {
+  if (occ.status === 'reserved') return 'warning'
+  if (occ.status === 'active') return 'success'
+  if (occ.status === 'pending_bill') return 'warning'
+  return 'info'
+}
+
+function getOccStatusLabel(occ: Occupation) {
+  if (occ.status === 'reserved') return '已预约'
+  if (occ.status === 'active') return '垂钓中'
+  if (occ.status === 'pending_bill') return '待结算'
+  if (occ.status === 'completed') return '已结束'
+  return occ.status
+}
+
+function handleCheckIn(row: Occupation) {
+  ElMessageBox.confirm(
+    `确定 ${row.anglerName} 已到店，开始垂钓吗？\n开钓后将开始计费。`,
+    '到店确认',
+    { confirmButtonText: '确认开钓', cancelButtonText: '取消', type: 'success' }
+  ).then(() => {
+    try {
+      occStore.checkIn(row.id)
+      ElMessage.success('已开钓，开始计费')
+    } catch (e: any) {
+      ElMessage.error(e.message)
+    }
+  }).catch(() => {})
+}
+
+function goToSchedule(row: Occupation) {
+  router.push({ path: '/schedule', query: { occId: row.id } })
+}
+
+function goToBill(row: Occupation, tab: string = 'active') {
+  router.push({ path: '/billing', query: { occId: row.id, tab } })
 }
 </script>
 
@@ -591,8 +710,24 @@ function goToBill(row: Occupation) {
   box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.15);
 }
 
+.chip-disabled {
+  opacity: 0.6;
+  cursor: not-allowed !important;
+  background: #f4f4f5 !important;
+  color: #909399 !important;
+  border-color: #e9e9eb !important;
+}
+
+.chip-disabled:hover {
+  background: #f4f4f5 !important;
+}
+
 .mt-4 {
   margin-top: 4px;
+}
+
+.ml-8 {
+  margin-left: 8px;
 }
 
 .empty-tip {

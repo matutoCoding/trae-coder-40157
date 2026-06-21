@@ -18,7 +18,7 @@ export interface FishingSpot {
   description?: string
 }
 
-export type OccupationStatus = 'active' | 'completed' | 'split' | 'pending_bill'
+export type OccupationStatus = 'reserved' | 'active' | 'completed' | 'split' | 'pending_bill' | 'cancelled'
 
 export interface Occupation {
   id: string
@@ -27,6 +27,7 @@ export interface Occupation {
   anglerId: string
   anglerName: string
   startTime: string
+  actualStartTime?: string
   endTime: string | null
   expectedStartTime?: string
   expectedEndTime?: string
@@ -72,8 +73,10 @@ export interface Bill {
   anglerName: string
   spotIds: string[]
   spotNames: string
-  startTime: string
+  expectedStartTime: string
+  actualStartTime: string
   endTime: string
+  startTime: string
   totalHours: number
   billingDetails: BillingDetail[]
   fishingFee: number

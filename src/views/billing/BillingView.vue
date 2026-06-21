@@ -38,6 +38,19 @@
             <el-table-column label="开始时间" width="170">
               <template #default="{ row }">{{ row.startTime }}</template>
             </el-table-column>
+            <el-table-column label="预约开钓" width="160">
+              <template #default="{ row }">
+                <span style="font-size: 12px;">{{ row.expectedStartTime || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="实际开钓" width="160">
+              <template #default="{ row }">
+                <span v-if="row.actualStartTime" style="font-size: 12px; color: #67c23a;">
+                  {{ row.actualStartTime }}
+                </span>
+                <span v-else class="text-muted" style="font-size: 12px;">未开钓</span>
+              </template>
+            </el-table-column>
             <el-table-column label="垂钓时长" width="110">
               <template #default="{ row }">{{ getDuration(row) }}</template>
             </el-table-column>
@@ -67,7 +80,13 @@
             class="mb-12"
             title="以下为中途拆分出的钓位占用，已结束垂钓等待结算。可补录渔获然后生成账单。"
           />
-          <el-table :data="occStore.pendingBillOccupations" stripe style="width: 100%">
+          <el-table
+            :data="occStore.pendingBillOccupations"
+            stripe
+            style="width: 100%"
+            :row-class-name="getRowClassName"
+            highlight-current-row
+          >
             <el-table-column prop="anglerName" label="钓友" width="120" />
             <el-table-column label="钓位" min-width="180">
               <template #default="{ row }">
@@ -84,12 +103,25 @@
               </template>
             </el-table-column>
             <el-table-column label="垂钓时段" width="340">
-              <template #default="{ row }">
-                <div>{{ row.startTime }}</div>
-                <div class="text-muted">至 {{ row.endTime }}</div>
-                <div class="text-muted">共 {{ getFixedDuration(row) }} 小时</div>
-              </template>
-            </el-table-column>
+          <template #default="{ row }">
+            <div>{{ row.startTime }}</div>
+            <div class="text-muted">至 {{ row.endTime }}</div>
+            <div class="text-muted">共 {{ getFixedDuration(row) }} 小时</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="预约开钓" width="160">
+          <template #default="{ row }">
+            <span style="font-size: 12px;">{{ row.expectedStartTime || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="实际开钓" width="160">
+          <template #default="{ row }">
+            <span v-if="row.actualStartTime" style="font-size: 12px; color: #67c23a;">
+              {{ row.actualStartTime }}
+            </span>
+            <span v-else class="text-muted" style="font-size: 12px;">未开钓</span>
+          </template>
+        </el-table-column>
             <el-table-column label="渔获" width="100">
               <template #default="{ row }">
                 {{ getCatchCount(row.id) }} 条 / ¥{{ getCatchTotal(row.id).toFixed(2) }}
@@ -311,8 +343,14 @@
           <el-descriptions-item label="账单号" :span="2">{{ currentBill.id }}</el-descriptions-item>
           <el-descriptions-item label="钓友">{{ currentBill.anglerName }}</el-descriptions-item>
           <el-descriptions-item label="钓位">{{ currentBill.spotNames }}</el-descriptions-item>
-          <el-descriptions-item label="开始时间">{{ currentBill.startTime }}</el-descriptions-item>
-          <el-descriptions-item label="结束时间">{{ currentBill.endTime }}</el-descriptions-item>
+          <el-descriptions-item label="预约开钓">{{ currentBill.expectedStartTime }}</el-descriptions-item>
+          <el-descriptions-item label="实际开钓">
+            <span v-if="currentBill.actualStartTime && currentBill.actualStartTime !== currentBill.expectedStartTime" style="color: #67c23a;">
+              {{ currentBill.actualStartTime }}
+            </span>
+            <span v-else class="text-muted">按预约时间计费</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="收竿结束" :span="2">{{ currentBill.endTime }}</el-descriptions-item>
           <el-descriptions-item label="总时长" :span="2">{{ currentBill.totalHours }} 小时</el-descriptions-item>
         </el-descriptions>
 
@@ -402,7 +440,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { useSpotStore } from '@/stores/spot'
-import { useOccupationStore } from '@/stores/occupation'
+import { useOccupationStore, getEffectiveStartTime } from '@/stores/occupation'
 import { useBillStore } from '@/stores/bill'
 import { usePricingStore } from '@/stores/pricing'
 import type { Occupation, Bill, CatchRecord } from '@/types'
@@ -428,33 +466,47 @@ const totalCatchFee = computed(() =>
   roundTo(currentCatches.value.reduce((sum, c) => sum + c.weight * c.unitPrice, 0))
 )
 
+const highlightOccId = ref('')
+
 onMounted(() => {
   const occId = route.query.occId as string
-  if (occId) {
-    const occ = occStore.getOccupationById(occId)
-    if (occ) {
-      setTimeout(() => {
-        if (occ.status === 'pending_bill' || occ.status === 'completed') {
-          generatePendingBill(occ)
-        } else {
-          generateBill(occ)
-        }
-      }, 200)
-    }
-  }
   const tab = route.query.tab as string
   if (tab) activeTab.value = tab
+  if (occId) {
+    highlightOccId.value = occId
+    setTimeout(() => {
+      const occ = occStore.getOccupationById(occId)
+      if (occ) {
+        if (occ.status === 'pending_bill') {
+          activeTab.value = 'pending'
+        } else if (occ.status === 'completed' && occ.billingStatus === 'unbilled') {
+          activeTab.value = 'pending'
+        } else if (occ.status === 'active') {
+          activeTab.value = 'active'
+        }
+      }
+    }, 100)
+  }
 })
 
+function getRowClassName({ row }: { row: any }) {
+  if (row.id === highlightOccId.value) {
+    return 'highlight-row'
+  }
+  return ''
+}
+
 function getDuration(occ: Occupation) {
+  const start = getEffectiveStartTime(occ)
   const end = occ.endTime || formatDateTime(new Date())
-  const h = calcHours(occ.startTime, end)
+  const h = calcHours(start, end)
   return `${h.toFixed(1)}小时`
 }
 
 function getFixedDuration(occ: Occupation) {
+  const start = getEffectiveStartTime(occ)
   if (!occ.endTime) return getDuration(occ).replace('小时', '')
-  const h = calcHours(occ.startTime, occ.endTime)
+  const h = calcHours(start, occ.endTime)
   return h.toFixed(2)
 }
 
@@ -602,5 +654,19 @@ function handlePay(bill: Bill) {
   margin-top: 6px;
   border-top: 1px dashed #e4e7ed;
   font-size: 16px;
+}
+
+:deep(.highlight-row) {
+  background-color: #fdf6ec !important;
+}
+
+:deep(.highlight-row td) {
+  background-color: #fdf6ec !important;
+  animation: highlightPulse 2s ease-in-out infinite;
+}
+
+@keyframes highlightPulse {
+  0%, 100% { background-color: #fdf6ec; }
+  50% { background-color: #faecd8; }
 }
 </style>
